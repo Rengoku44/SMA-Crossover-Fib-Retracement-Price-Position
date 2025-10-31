@@ -107,9 +107,12 @@ bool GetSMA(double &sma5, double &sma13)
 //+------------------------------------------------------------------+
 bool FindExtremeClose(int bars, bool findHigh, double &extPrice, datetime &extTime)
 {
+   if(bars <= 0 || bars > iBars(_Symbol, PERIOD_H1)) return false;
+
    extPrice = iClose(_Symbol, PERIOD_H1, bars-1);
    extTime = iTime(_Symbol, PERIOD_H1, bars-1);
    int start = MathMin(bars-1, iBars(_Symbol, PERIOD_H1)-1);
+
    for(int i = start; i >= 0; i--)
    {
       double c = iClose(_Symbol, PERIOD_H1, i);
@@ -134,46 +137,48 @@ void UpdateFibObject()
    // Delete old Fib
    if(ObjectFind(0, fibObjectName) >= 0) ObjectDelete(0, fibObjectName);
 
-   double extreme1, extreme2;
-   datetime time1, time2;
-   bool isBullishSetup; // true if first extreme is HIGH
+   double high24 = -1, low24 = 1e10;
+   datetime highTime = 0, lowTime = 0;
 
-   // Step 1: Find most extreme close in last 24 bars
-   if(!FindExtremeClose(Lookback_Bars, true, extreme1, time1))
-      return;
-
-   double high24 = extreme1, low24 = extreme1;
-   datetime highTime = time1, lowTime = time1;
-
+   // Scan last 24 bars for highest high and lowest low
    for(int i = 0; i < Lookback_Bars; i++)
    {
       double c = iClose(_Symbol, PERIOD_H1, i);
-      if(c > high24) { high24 = c; highTime = iTime(_Symbol, PERIOD_H1, i); }
-      if(c < low24)  { low24 = c;  lowTime = iTime(_Symbol, PERIOD_H1, i); }
+      datetime t = iTime(_Symbol, PERIOD_H1, i);
+      if(c > high24) { high24 = c; highTime = t; }
+      if(c < low24)  { low24 = c;  lowTime = t; }
    }
 
-   // Decide which is primary (most extreme)
-   if(high24 - low24 > 0)
+   if(high24 == -1 || low24 == 1e10) return;
+
+   double extreme1, extreme2;
+   datetime time1, time2;
+   bool isBuySetup; // true = BUY (first extreme is LOW), false = SELL (first extreme is HIGH)
+
+   // Determine most extreme: greater deviation from midpoint
+   double mid = (high24 + low24) / 2.0;
+   double devHigh = high24 - mid;
+   double devLow = mid - low24;
+
+   if(devHigh >= devLow)
    {
-      if(high24 >= low24 + (high24 - low24) * 0.5) // High is more extreme
-      {
-         extreme1 = high24; time1 = highTime;
-         isBullishSetup = true;
-      }
-      else
-      {
-         extreme1 = low24; time1 = lowTime;
-         isBullishSetup = false;
-      }
+      extreme1 = high24; time1 = highTime;  // First extreme: HIGH → SELL setup
+      isBuySetup = false;
    }
-   else return;
+   else
+   {
+      extreme1 = low24; time1 = lowTime;    // First extreme: LOW → BUY setup
+      isBuySetup = true;
+   }
 
-   // Step 2: Find most recent opposite extreme AFTER primary
+   // Find most recent opposite extreme AFTER time1
    int startBar = iBarShift(_Symbol, PERIOD_H1, time1, false);
+   if(startBar < 0) return;
+
    extreme2 = iClose(_Symbol, PERIOD_H1, startBar);
    time2 = time1;
+   bool searchHigh = isBuySetup; // if BUY setup → look for recent HIGH
 
-   bool searchHigh = !isBullishSetup; // if primary was low → look for recent high
    for(int i = startBar; i >= 0; i--)
    {
       double c = iClose(_Symbol, PERIOD_H1, i);
@@ -184,23 +189,23 @@ void UpdateFibObject()
       }
    }
 
-   // Step 3: Stretch forward 24 bars at extreme2 level
+   // Stretch forward 24 bars at extreme2 level
    datetime futureTime = curBarTime + Forward_Bars * 3600;
    double futurePrice = extreme2;
 
-   // Create Fib Object
+   // Create Fib
    ObjectCreate(0, fibObjectName, OBJ_FIBO, 0, time1, extreme1, futureTime, futurePrice);
    ObjectSetInteger(0, fibObjectName, OBJPROP_RAY_RIGHT, true);
-   ObjectSetInteger(0, fibObjectName, OBJPROP_COLOR, isBullishSetup ? clrRed : clrLime);
-   ObjectSetString(0, fibObjectName, OBJPROP_TEXT, isBullishSetup ? "Fib SELL Setup" : "Fib BUY Setup");
+   ObjectSetInteger(0, fibObjectName, OBJPROP_COLOR, isBuySetup ? clrLime : clrRed);
+   ObjectSetString(0, fibObjectName, OBJPROP_TEXT, isBuySetup ? "Fib BUY Setup" : "Fib SELL Setup");
 
-   // Set levels
+   // Levels: 0.0, 38.2, 61.8
    ObjectSetInteger(0, fibObjectName, OBJPROP_LEVELS, 3);
    ObjectSetDouble(0, fibObjectName, OBJPROP_LEVELVALUE, 0, 0.0);
    ObjectSetDouble(0, fibObjectName, OBJPROP_LEVELVALUE, 1, Fib_Level_Low);
    ObjectSetDouble(0, fibObjectName, OBJPROP_LEVELVALUE, 2, Fib_Level_High);
 
-   Print("FIB CREATED: ", (isBullishSetup ? "SELL" : "BUY"),
+   Print("FIB CREATED: ", (isBuySetup ? "BUY" : "SELL"),
          " | P1: ", DoubleToString(extreme1, _Digits), " @ ", TimeToString(time1),
          " | P2: ", DoubleToString(extreme2, _Digits), " → ", TimeToString(futureTime));
 }
@@ -219,9 +224,12 @@ bool PriceInFibZone(double &zoneLow, double &zoneHigh, bool &isBuySetup)
    zoneLow = base + range * Fib_Level_Low;
    zoneHigh = base + range * Fib_Level_High;
 
-   // Determine direction from Fib orientation
-   isBuySetup = (p1 < p2); // Fib going up → buy setup
-   if(!isBuySetup) { double t = zoneLow; zoneLow = zoneHigh; zoneHigh = t; }
+   // Fib going up (p1 < p2) → BUY setup
+   isBuySetup = (p1 < p2);
+   if(!isBuySetup)
+   {
+      double t = zoneLow; zoneLow = zoneHigh; zoneHigh = t;
+   }
 
    double close = iClose(_Symbol, PERIOD_H1, 0);
    return (close >= zoneLow && close <= zoneHigh);
@@ -244,11 +252,10 @@ bool GetFibLevel(double level, double &price, bool isBuySetup)
 //+------------------------------------------------------------------+
 //| Calculate SL/TP: 0.0 = SL, 100.0 = TP                             |
 //+------------------------------------------------------------------+
-bool CalculateSLTP(double &sl, double &tp, bool isBuy)
+bool CalculateSLTP(double &sl, double &tp, bool isBuy, bool isBuySetup)
 {
-   bool isBuySetup;
-   if(!GetFibLevel(0.0, sl, isBuy == isBuySetup)) return false;
-   if(!GetFibLevel(1.0, tp, isBuy == isBuySetup)) return false;
+   if(!GetFibLevel(0.0, sl, isBuySetup)) return false;
+   if(!GetFibLevel(1.0, tp, isBuySetup)) return false;
 
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    sl = NormalizeDouble(sl, digits);
@@ -364,27 +371,26 @@ void OnTick()
    bool priceAboveSMA5 = close > sma5;
    bool priceBelowSMA5 = close < sma5;
 
-   // Determine if first extreme was higher (for buy) or lower (for sell)
+   // Determine if first extreme was higher (SELL setup) or lower (BUY setup)
    double p1 = ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 0);
-   double p2 = ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 1);
-   bool firstWasHigher = (p1 > p2); // Fib starts high → expect pullback (sell)
+   bool firstWasHigher = (p1 > ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 1));
 
-   // BUY: First extreme HIGH, SMA5>SMA13, price > SMA5
-   if(isBuySetup && smaBullish && priceAboveSMA5 && firstWasHigher)
+   // BUY: First extreme LOW, SMA5>SMA13, price > SMA5
+   if(isBuySetup && smaBullish && priceAboveSMA5 && !firstWasHigher)
    {
       double sl, tp;
-      if(CalculateSLTP(sl, tp, true) && trade.Buy(LotSize, _Symbol, ask, sl, tp, "Fib BUY"))
+      if(CalculateSLTP(sl, tp, true, isBuySetup) && trade.Buy(LotSize, _Symbol, ask, sl, tp, "Fib BUY"))
       {
          Print("BUY EXECUTED @ ", ask, " | SL=", sl, " TP=", tp);
          openPositions = CountOpenPositions();
       }
    }
 
-   // SELL: First extreme LOW, SMA5<SMA13, price < SMA5
-   if(!isBuySetup && smaBearish && priceBelowSMA5 && !firstWasHigher)
+   // SELL: First extreme HIGH, SMA5<SMA13, price < SMA5
+   if(!isBuySetup && smaBearish && priceBelowSMA5 && firstWasHigher)
    {
       double sl, tp;
-      if(CalculateSLTP(sl, tp, false) && trade.Sell(LotSize, _Symbol, bid, sl, tp, "Fib SELL"))
+      if(CalculateSLTP(sl, tp, false, isBuySetup) && trade.Sell(LotSize, _Symbol, bid, sl, tp, "Fib SELL"))
       {
          Print("SELL EXECUTED @ ", bid, " | SL=", sl, " TP=", tp);
          openPositions = CountOpenPositions();
