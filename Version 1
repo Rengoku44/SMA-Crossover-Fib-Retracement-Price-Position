@@ -1,26 +1,27 @@
 //+------------------------------------------------------------------+
 //| Expert Advisor: Swing Fib EA - 24-Bar Extreme + SMA Filter       |
+//| CORRECTED: First Extreme = LOW → SELL | HIGH → BUY               |
 //+------------------------------------------------------------------+
 #property description "Fib EA: 24-Bar Extreme Pins | 38.2-61.8 Entry | SMA Filter | Max 2 Trades"
 #property strict
 #property copyright "xAI Grok - Custom EA"
 
 //--- Inputs
-input int      MA1Period                  = 5;     // Short SMA
-input int      MA2Period                  = 13;    // Long SMA
-input double   LotSize                    = 0.1;   // Fixed lot size
-input int      Slippage                   = 3;     // Slippage in points
-input double   Trailing_ATR_Multiplier    = 1.0;   // Trailing distance (0 = disable)
-input double   Trailing_Start_ATR_Multiplier = 1.0; // Start trailing after X ATR
-input double   Breakeven_ATR_Multiplier   = 1.0;   // Move SL to breakeven after X ATR
-input double   Breakeven_Buffer_Points    = 10;    // Buffer in points
-input int      MagicNumber                = 123456;// EA identifier
-input int      TimezoneOffset             = -7;    // GMT+2 to EST (adjust as needed)
-input double   Fib_Level_Low              = 0.382; // 38.2%
-input double   Fib_Level_High             = 0.618; // 61.8%
-input int      Lookback_Bars              = 24;    // Lookback for extreme
-input int      Forward_Bars               = 24;    // Stretch forward
-input int      Fib_Expiry_Bars            = 100;   // ~4 days expiry
+input int    MA1Period                  = 5;     // Short SMA
+input int    MA2Period                  = 13;    // Long SMA
+input double LotSize                    = 0.1;   // Fixed lot size
+input int    Slippage                   = 3;     // Slippage in points
+input double Trailing_ATR_Multiplier    = 1.0;   // Trailing distance (0 = disable)
+input double Trailing_Start_ATR_Multiplier = 1.0;// Start trailing after X ATR
+input double Breakeven_ATR_Multiplier   = 1.0;   // Move SL to breakeven after X ATR
+input double Breakeven_Buffer_Points    = 10;    // Buffer in points
+input int    MagicNumber                = 123456;// EA identifier
+input int    TimezoneOffset             = -7;    // GMT+2 to EST (adjust as needed)
+input double Fib_Level_Low              = 0.382; // 38.2%
+input double Fib_Level_High             = 0.618; // 61.8%
+input int    Lookback_Bars              = 24;    // Lookback for extreme
+input int    Forward_Bars               = 24;    // Stretch forward
+input int    Fib_Expiry_Bars            = 100;   // ~4 days expiry
 
 //--- Colors
 color clrBuy  = clrLime;
@@ -42,17 +43,14 @@ int OnInit()
 {
    trade.SetExpertMagicNumber(MagicNumber);
    trade.SetDeviationInPoints(Slippage);
-
    ma1Handle = iMA(_Symbol, PERIOD_H1, MA1Period, 0, MODE_SMA, PRICE_CLOSE);
    ma2Handle = iMA(_Symbol, PERIOD_H1, MA2Period, 0, MODE_SMA, PRICE_CLOSE);
    atrHandle = iATR(_Symbol, PERIOD_H1, 14);
-
    if(ma1Handle == INVALID_HANDLE || ma2Handle == INVALID_HANDLE || atrHandle == INVALID_HANDLE)
    {
       Print("Failed to create indicator handles. Error: ", GetLastError());
       return INIT_FAILED;
    }
-
    openPositions = CountOpenPositions();
    Print("EA Initialized. Open positions: ", openPositions);
    return INIT_SUCCEEDED;
@@ -103,16 +101,14 @@ bool GetSMA(double &sma5, double &sma13)
 }
 
 //+------------------------------------------------------------------+
-//| Find Extreme Close in Last N Bars                                 |
+//| Find Extreme Close in Last N Bars                                |
 //+------------------------------------------------------------------+
 bool FindExtremeClose(int bars, bool findHigh, double &extPrice, datetime &extTime)
 {
    if(bars <= 0 || bars > iBars(_Symbol, PERIOD_H1)) return false;
-
    extPrice = iClose(_Symbol, PERIOD_H1, bars-1);
    extTime = iTime(_Symbol, PERIOD_H1, bars-1);
    int start = MathMin(bars-1, iBars(_Symbol, PERIOD_H1)-1);
-
    for(int i = start; i >= 0; i--)
    {
       double c = iClose(_Symbol, PERIOD_H1, i);
@@ -133,35 +129,32 @@ void UpdateFibObject()
    datetime curBarTime = iTime(_Symbol, PERIOD_H1, 0);
    if(curBarTime == lastH1BarTime) return;
    lastH1BarTime = curBarTime;
-
    if(ObjectFind(0, fibObjectName) >= 0) ObjectDelete(0, fibObjectName);
 
    double high24 = -1, low24 = 1e10;
    datetime highTime = 0, lowTime = 0;
-
    for(int i = 0; i < Lookback_Bars; i++)
    {
       double c = iClose(_Symbol, PERIOD_H1, i);
       datetime t = iTime(_Symbol, PERIOD_H1, i);
       if(c > high24) { high24 = c; highTime = t; }
-      if(c < low24)  { low24 = c;  lowTime = t; }
+      if(c < low24) { low24 = c; lowTime = t; }
    }
    if(high24 == -1 || low24 == 1e10) return;
 
    double extreme1, extreme2;
    datetime time1, time2;
-   bool isBuySetup;               // true = BUY (first extreme = LOW)
-
+   bool isBuySetup; // true = BUY (first extreme = LOW)
    double mid = (high24 + low24) / 2.0;
    double devHigh = high24 - mid;
-   double devLow  = mid - low24;
+   double devLow = mid - low24;
 
-   if(devHigh >= devLow)          // first extreme = HIGH to SELL setup
+   if(devHigh >= devLow) // first extreme = HIGH → SELL setup
    {
       extreme1 = high24; time1 = highTime;
       isBuySetup = false;
    }
-   else                           // first extreme = LOW to BUY setup
+   else // first extreme = LOW → BUY setup
    {
       extreme1 = low24; time1 = lowTime;
       isBuySetup = true;
@@ -169,11 +162,9 @@ void UpdateFibObject()
 
    int startBar = iBarShift(_Symbol, PERIOD_H1, time1, false);
    if(startBar < 0) return;
-
    extreme2 = iClose(_Symbol, PERIOD_H1, startBar);
    time2 = time1;
-   bool searchHigh = isBuySetup;   // BUY to look for recent HIGH
-
+   bool searchHigh = isBuySetup; // BUY to look for recent HIGH
    for(int i = startBar; i >= 0; i--)
    {
       double c = iClose(_Symbol, PERIOD_H1, i);
@@ -191,7 +182,6 @@ void UpdateFibObject()
    ObjectSetInteger(0, fibObjectName, OBJPROP_RAY_RIGHT, true);
    ObjectSetInteger(0, fibObjectName, OBJPROP_COLOR, isBuySetup ? clrLime : clrRed);
    ObjectSetString(0, fibObjectName, OBJPROP_TEXT, isBuySetup ? "Fib BUY Setup" : "Fib SELL Setup");
-
    ObjectSetInteger(0, fibObjectName, OBJPROP_LEVELS, 3);
    ObjectSetDouble(0, fibObjectName, OBJPROP_LEVELVALUE, 0, 0.0);
    ObjectSetDouble(0, fibObjectName, OBJPROP_LEVELVALUE, 1, Fib_Level_Low);
@@ -208,20 +198,16 @@ void UpdateFibObject()
 bool PriceInFibZone(double &zoneLow, double &zoneHigh, bool &isBuySetup)
 {
    if(ObjectFind(0, fibObjectName) < 0) return false;
-
    double p1 = ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 0);
    double p2 = ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 1);
    double base = MathMin(p1, p2), range = MathAbs(p1 - p2);
-
-   zoneLow  = base + range * Fib_Level_Low;
+   zoneLow = base + range * Fib_Level_Low;
    zoneHigh = base + range * Fib_Level_High;
-
-   isBuySetup = (p1 < p2);                 // Fib going up to BUY
+   isBuySetup = (p1 < p2); // Fib going up → BUY
    if(!isBuySetup)
    {
       double t = zoneLow; zoneLow = zoneHigh; zoneHigh = t;
    }
-
    double close = iClose(_Symbol, PERIOD_H1, 0);
    return (close >= zoneLow && close <= zoneHigh);
 }
@@ -241,13 +227,12 @@ bool GetFibLevel(double level, double &price, bool isBuySetup)
 }
 
 //+------------------------------------------------------------------+
-//| Calculate SL/TP: 0.0 = SL, 100.0 = TP                             |
+//| Calculate SL/TP: 0.0 = SL, 100.0 = TP                            |
 //+------------------------------------------------------------------+
 bool CalculateSLTP(double &sl, double &tp, bool isBuy, bool isBuySetup)
 {
    if(!GetFibLevel(0.0, sl, isBuySetup)) return false;
    if(!GetFibLevel(1.0, tp, isBuySetup)) return false;
-
    int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
    sl = NormalizeDouble(sl, digits);
    tp = NormalizeDouble(tp, digits);
@@ -262,7 +247,6 @@ void TrailStop(string sym)
    if(Trailing_ATR_Multiplier <= 0) return;
    double atr[1];
    if(CopyBuffer(atrHandle, 0, 0, 1, atr) <= 0) return;
-
    double dist = atr[0] * Trailing_ATR_Multiplier;
    double start = atr[0] * Trailing_Start_ATR_Multiplier;
    double be_thr = atr[0] * Breakeven_ATR_Multiplier;
@@ -310,11 +294,67 @@ bool IsTradingTime()
    datetime t = TimeCurrent() + TimezoneOffset * 3600;
    MqlDateTime dt; TimeToStruct(t, dt);
    int d = dt.day_of_week, h = dt.hour;
-
-   if(d == 0 && h >= 19) return true;                    // Sun after 19:00
+   if(d == 0 && h >= 19) return true; // Sun after 19:00
    if(d >= 1 && d <= 4 && (h < 12 || h >= 18)) return true; // Mon-Thu outside 12-18
-   if(d == 5 && h < 4) return true;                      // Fri before 04:00
+   if(d == 5 && h < 4) return true; // Fri before 04:00
    return false;
+}
+
+//+------------------------------------------------------------------+
+//| NEW: Entry Logic - First Extreme Determines Direction            |
+//+------------------------------------------------------------------+
+void CheckAndEnter()
+{
+   if(openPositions >= 2) return;
+   if(ObjectFind(0, fibObjectName) < 0) return;
+
+   double zoneLow, zoneHigh;
+   bool   isBuySetup = false;
+   if(!PriceInFibZone(zoneLow, zoneHigh, isBuySetup)) return;
+
+   double sma5, sma13;
+   if(!GetSMA(sma5, sma13)) return;
+
+   double close = iClose(_Symbol, PERIOD_H1, 0);
+   double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+
+   bool smaBullish = sma5 > sma13;
+   bool smaBearish = sma5 < sma13;
+   bool priceAbove = close > sma5;
+   bool priceBelow = close < sma5;
+
+   //--- Determine first extreme: P1 = first point
+   double p1 = ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 0);
+   double p2 = ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 1);
+   bool firstWasLow  = (p1 < p2);  // P1 low → Fib up → SELL setup
+   bool firstWasHigh = (p1 > p2);  // P1 high → Fib down → BUY setup
+
+   double sl, tp;
+
+   //=== SELL: First extreme = LOW (retracement from high)
+   if(firstWasLow && smaBearish && priceBelow)
+   {
+      if(CalculateSLTP(sl, tp, false, isBuySetup) &&
+         trade.Sell(LotSize, _Symbol, bid, sl, tp, "Fib SELL"))
+      {
+         Print("SELL EXECUTED @ ", bid, " | SL=", sl, " TP=", tp);
+         openPositions = CountOpenPositions();
+      }
+      return;
+   }
+
+   //=== BUY: First extreme = HIGH (retracement from low)
+   if(firstWasHigh && smaBullish && priceAbove)
+   {
+      if(CalculateSLTP(sl, tp, true, isBuySetup) &&
+         trade.Buy(LotSize, _Symbol, ask, sl, tp, "Fib BUY"))
+      {
+         Print("BUY EXECUTED @ ", ask, " | SL=", sl, " TP=", tp);
+         openPositions = CountOpenPositions();
+      }
+      return;
+   }
 }
 
 //+------------------------------------------------------------------+
@@ -331,7 +371,6 @@ void OnTick()
    prevBar = curBar;
 
    openPositions = CountOpenPositions();
-   if(openPositions >= 2) return;
    if(iBars(_Symbol, PERIOD_H1) < Lookback_Bars + 10) return;
 
    UpdateFibObject();
@@ -344,49 +383,8 @@ void OnTick()
          ObjectDelete(0, fibObjectName);
    }
 
-   if(ObjectFind(0, fibObjectName) < 0) return;
-
-   double zoneLow, zoneHigh;
-   bool   isBuySetup = false;               // <-- initialise
-   if(!PriceInFibZone(zoneLow, zoneHigh, isBuySetup)) return;
-
-   double sma5, sma13;
-   if(!GetSMA(sma5, sma13)) return;
-
-   double close = iClose(_Symbol, PERIOD_H1, 0);
-   double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
-
-   bool smaBullish = sma5 > sma13;
-   bool smaBearish = sma5 < sma13;
-   bool priceAboveSMA5 = close > sma5;
-   bool priceBelowSMA5 = close < sma5;
-
-   // First extreme higher to SELL, lower to BUY
-   double p1 = ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 0);
-   bool   firstWasHigher = (p1 > ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 1));
-
-   // BUY condition
-   if(isBuySetup && smaBullish && priceAboveSMA5 && !firstWasHigher)
-   {
-      double sl, tp;
-      if(CalculateSLTP(sl, tp, true, isBuySetup) && trade.Buy(LotSize, _Symbol, ask, sl, tp, "Fib BUY"))
-      {
-         Print("BUY EXECUTED @ ", ask, " | SL=", sl, " TP=", tp);
-         openPositions = CountOpenPositions();
-      }
-   }
-
-   // SELL condition
-   if(!isBuySetup && smaBearish && priceBelowSMA5 && firstWasHigher)
-   {
-      double sl, tp;
-      if(CalculateSLTP(sl, tp, false, isBuySetup) && trade.Sell(LotSize, _Symbol, bid, sl, tp, "Fib SELL"))
-      {
-         Print("SELL EXECUTED @ ", bid, " | SL=", sl, " TP=", tp);
-         openPositions = CountOpenPositions();
-      }
-   }
+   // === NEW: Entry logic based on first extreme ===
+   CheckAndEnter();
 
    // Close all on Friday 16:00 EST
    datetime cur = TimeCurrent() + TimezoneOffset * 3600;
