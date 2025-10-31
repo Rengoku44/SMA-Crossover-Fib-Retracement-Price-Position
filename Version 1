@@ -15,7 +15,7 @@ input double   Trailing_Start_ATR_Multiplier = 1.0; // Start trailing after X AT
 input double   Breakeven_ATR_Multiplier   = 1.0;   // Move SL to breakeven after X ATR
 input double   Breakeven_Buffer_Points    = 10;    // Buffer in points
 input int      MagicNumber                = 123456;// EA identifier
-input int      TimezoneOffset             = -7;    // GMT+2 → EST (adjust as needed)
+input int      TimezoneOffset             = -7;    // GMT+2 to EST (adjust as needed)
 input double   Fib_Level_Low              = 0.382; // 38.2%
 input double   Fib_Level_High             = 0.618; // 61.8%
 input int      Lookback_Bars              = 24;    // Lookback for extreme
@@ -126,7 +126,7 @@ bool FindExtremeClose(int bars, bool findHigh, double &extPrice, datetime &extTi
 }
 
 //+------------------------------------------------------------------+
-//| Update Fibonacci: 24-Bar Extreme → Recent Opposite → Forward     |
+//| Update Fibonacci: 24-Bar Extreme to Recent Opposite to Forward   |
 //+------------------------------------------------------------------+
 void UpdateFibObject()
 {
@@ -134,13 +134,11 @@ void UpdateFibObject()
    if(curBarTime == lastH1BarTime) return;
    lastH1BarTime = curBarTime;
 
-   // Delete old Fib
    if(ObjectFind(0, fibObjectName) >= 0) ObjectDelete(0, fibObjectName);
 
    double high24 = -1, low24 = 1e10;
    datetime highTime = 0, lowTime = 0;
 
-   // Scan last 24 bars for highest high and lowest low
    for(int i = 0; i < Lookback_Bars; i++)
    {
       double c = iClose(_Symbol, PERIOD_H1, i);
@@ -148,36 +146,33 @@ void UpdateFibObject()
       if(c > high24) { high24 = c; highTime = t; }
       if(c < low24)  { low24 = c;  lowTime = t; }
    }
-
    if(high24 == -1 || low24 == 1e10) return;
 
    double extreme1, extreme2;
    datetime time1, time2;
-   bool isBuySetup; // true = BUY (first extreme is LOW), false = SELL (first extreme is HIGH)
+   bool isBuySetup;               // true = BUY (first extreme = LOW)
 
-   // Determine most extreme: greater deviation from midpoint
    double mid = (high24 + low24) / 2.0;
    double devHigh = high24 - mid;
-   double devLow = mid - low24;
+   double devLow  = mid - low24;
 
-   if(devHigh >= devLow)
+   if(devHigh >= devLow)          // first extreme = HIGH to SELL setup
    {
-      extreme1 = high24; time1 = highTime;  // First extreme: HIGH → SELL setup
+      extreme1 = high24; time1 = highTime;
       isBuySetup = false;
    }
-   else
+   else                           // first extreme = LOW to BUY setup
    {
-      extreme1 = low24; time1 = lowTime;    // First extreme: LOW → BUY setup
+      extreme1 = low24; time1 = lowTime;
       isBuySetup = true;
    }
 
-   // Find most recent opposite extreme AFTER time1
    int startBar = iBarShift(_Symbol, PERIOD_H1, time1, false);
    if(startBar < 0) return;
 
    extreme2 = iClose(_Symbol, PERIOD_H1, startBar);
    time2 = time1;
-   bool searchHigh = isBuySetup; // if BUY setup → look for recent HIGH
+   bool searchHigh = isBuySetup;   // BUY to look for recent HIGH
 
    for(int i = startBar; i >= 0; i--)
    {
@@ -189,17 +184,14 @@ void UpdateFibObject()
       }
    }
 
-   // Stretch forward 24 bars at extreme2 level
    datetime futureTime = curBarTime + Forward_Bars * 3600;
    double futurePrice = extreme2;
 
-   // Create Fib
    ObjectCreate(0, fibObjectName, OBJ_FIBO, 0, time1, extreme1, futureTime, futurePrice);
    ObjectSetInteger(0, fibObjectName, OBJPROP_RAY_RIGHT, true);
    ObjectSetInteger(0, fibObjectName, OBJPROP_COLOR, isBuySetup ? clrLime : clrRed);
    ObjectSetString(0, fibObjectName, OBJPROP_TEXT, isBuySetup ? "Fib BUY Setup" : "Fib SELL Setup");
 
-   // Levels: 0.0, 38.2, 61.8
    ObjectSetInteger(0, fibObjectName, OBJPROP_LEVELS, 3);
    ObjectSetDouble(0, fibObjectName, OBJPROP_LEVELVALUE, 0, 0.0);
    ObjectSetDouble(0, fibObjectName, OBJPROP_LEVELVALUE, 1, Fib_Level_Low);
@@ -207,7 +199,7 @@ void UpdateFibObject()
 
    Print("FIB CREATED: ", (isBuySetup ? "BUY" : "SELL"),
          " | P1: ", DoubleToString(extreme1, _Digits), " @ ", TimeToString(time1),
-         " | P2: ", DoubleToString(extreme2, _Digits), " → ", TimeToString(futureTime));
+         " | P2: ", DoubleToString(extreme2, _Digits), " to ", TimeToString(futureTime));
 }
 
 //+------------------------------------------------------------------+
@@ -221,11 +213,10 @@ bool PriceInFibZone(double &zoneLow, double &zoneHigh, bool &isBuySetup)
    double p2 = ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 1);
    double base = MathMin(p1, p2), range = MathAbs(p1 - p2);
 
-   zoneLow = base + range * Fib_Level_Low;
+   zoneLow  = base + range * Fib_Level_Low;
    zoneHigh = base + range * Fib_Level_High;
 
-   // Fib going up (p1 < p2) → BUY setup
-   isBuySetup = (p1 < p2);
+   isBuySetup = (p1 < p2);                 // Fib going up to BUY
    if(!isBuySetup)
    {
       double t = zoneLow; zoneLow = zoneHigh; zoneHigh = t;
@@ -356,26 +347,26 @@ void OnTick()
    if(ObjectFind(0, fibObjectName) < 0) return;
 
    double zoneLow, zoneHigh;
-   bool isBuySetup;
+   bool   isBuySetup = false;               // <-- initialise
    if(!PriceInFibZone(zoneLow, zoneHigh, isBuySetup)) return;
 
    double sma5, sma13;
    if(!GetSMA(sma5, sma13)) return;
 
    double close = iClose(_Symbol, PERIOD_H1, 0);
-   double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+   double ask   = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+   double bid   = SymbolInfoDouble(_Symbol, SYMBOL_BID);
 
    bool smaBullish = sma5 > sma13;
    bool smaBearish = sma5 < sma13;
    bool priceAboveSMA5 = close > sma5;
    bool priceBelowSMA5 = close < sma5;
 
-   // Determine if first extreme was higher (SELL setup) or lower (BUY setup)
+   // First extreme higher to SELL, lower to BUY
    double p1 = ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 0);
-   bool firstWasHigher = (p1 > ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 1));
+   bool   firstWasHigher = (p1 > ObjectGetDouble(0, fibObjectName, OBJPROP_PRICE, 1));
 
-   // BUY: First extreme LOW, SMA5>SMA13, price > SMA5
+   // BUY condition
    if(isBuySetup && smaBullish && priceAboveSMA5 && !firstWasHigher)
    {
       double sl, tp;
@@ -386,7 +377,7 @@ void OnTick()
       }
    }
 
-   // SELL: First extreme HIGH, SMA5<SMA13, price < SMA5
+   // SELL condition
    if(!isBuySetup && smaBearish && priceBelowSMA5 && firstWasHigher)
    {
       double sl, tp;
