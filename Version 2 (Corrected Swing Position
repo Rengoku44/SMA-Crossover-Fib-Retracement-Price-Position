@@ -1,6 +1,7 @@
 //+------------------------------------------------------------------+
 //| Expert Advisor: Swing Fib EA – 24-Bar Extreme + SMA Filter       |
 //| FIXED: First extreme by TIME → HIGH-first = SELL | LOW-first = BUY |
+//| UPDATED: 5 Fib Levels (0.0%, 38.2%, 50.0%, 61.8%, 100.0%)        |
 //| Limits: 1 trade per symbol, 2 trades total across all symbols    |
 //+------------------------------------------------------------------+
 #property description "Fib EA: 24-Bar Extreme Pins | 38.2-61.8 Entry | SMA Filter | Max 1 per Symbol | Max 2 Total"
@@ -150,30 +151,30 @@ void UpdateFibObject()
    }
    if(high24 == -1 || low24 == 1e10) return;
    
-   //--- *** TIME-BASED FIRST EXTREME ***
+   //--- TIME-BASED FIRST EXTREME
    double   extreme1, extreme2;
    datetime time1, time2;
-   bool     isBuySetup;                 // true = BUY, false = SELL
+   bool     isBuySetup;
    
-   if(highTime < lowTime)               // HIGH came first → down-swing → SELL
+   if(highTime < lowTime)               // HIGH first → down-swing → SELL
    {
       extreme1   = high24;
       time1      = highTime;
-      isBuySetup = false;               // SELL
+      isBuySetup = false;
    }
-   else                                 // LOW came first → up-swing → BUY
+   else                                 // LOW first → up-swing → BUY
    {
       extreme1   = low24;
       time1      = lowTime;
-      isBuySetup = true;                // BUY
+      isBuySetup = true;
    }
    
-   //--- find the most recent opposite extreme after time1
+   //--- find most recent opposite extreme after time1
    int startBar = iBarShift(_Symbol, PERIOD_H1, time1, false);
    if(startBar < 0) return;
    extreme2 = iClose(_Symbol, PERIOD_H1, startBar);
    time2    = time1;
-   bool searchHigh = isBuySetup;        // BUY → look for newer high, SELL → newer low
+   bool searchHigh = isBuySetup;
    for(int i = startBar; i >= 0; i--)
    {
       double c = iClose(_Symbol, PERIOD_H1, i);
@@ -187,15 +188,25 @@ void UpdateFibObject()
    //--- stretch forward
    datetime futureTime = curBarTime + Forward_Bars * 3600;
    
-   //--- create fib object
+   //--- create fib object with 5 levels
    ObjectCreate(0, fibObjectName, OBJ_FIBO, 0, time1, extreme1, futureTime, extreme2);
    ObjectSetInteger(0, fibObjectName, OBJPROP_RAY_RIGHT, true);
    ObjectSetInteger(0, fibObjectName, OBJPROP_COLOR, isBuySetup ? clrLime : clrRed);
    ObjectSetString (0, fibObjectName, OBJPROP_TEXT,   isBuySetup ? "Fib BUY Setup" : "Fib SELL Setup");
-   ObjectSetInteger(0, fibObjectName, OBJPROP_LEVELS, 3);
-   ObjectSetDouble (0, fibObjectName, OBJPROP_LEVELVALUE, 0, 0.0);
-   ObjectSetDouble (0, fibObjectName, OBJPROP_LEVELVALUE, 1, Fib_Level_Low);
-   ObjectSetDouble (0, fibObjectName, OBJPROP_LEVELVALUE, 2, Fib_Level_High);
+   
+   ObjectSetInteger(0, fibObjectName, OBJPROP_LEVELS, 5);
+   ObjectSetDouble (0, fibObjectName, OBJPROP_LEVELVALUE, 0, 0.0);     // 0.0% - SL
+   ObjectSetDouble (0, fibObjectName, OBJPROP_LEVELVALUE, 1, Fib_Level_Low); // 38.2%
+   ObjectSetDouble (0, fibObjectName, OBJPROP_LEVELVALUE, 2, 0.500);   // 50.0%
+   ObjectSetDouble (0, fibObjectName, OBJPROP_LEVELVALUE, 3, Fib_Level_High); // 61.8%
+   ObjectSetDouble (0, fibObjectName, OBJPROP_LEVELVALUE, 4, 1.0);     // 100.0% - TP
+
+   //--- clean level labels
+   ObjectSetString(0, fibObjectName, OBJPROP_LEVELTEXT, 0, "0.0%");
+   ObjectSetString(0, fibObjectName, OBJPROP_LEVELTEXT, 1, "38.2%");
+   ObjectSetString(0, fibObjectName, OBJPROP_LEVELTEXT, 2, "50.0%");
+   ObjectSetString(0, fibObjectName, OBJPROP_LEVELTEXT, 3, "61.8%");
+   ObjectSetString(0, fibObjectName, OBJPROP_LEVELTEXT, 4, "100.0%");
    
    Print("FIB CREATED: ", (isBuySetup?"BUY":"SELL"),
          " | FirstExtreme: ", (highTime<lowTime?"HIGH":"LOW"),
@@ -214,7 +225,7 @@ bool PriceInFibZone(double &zoneLow, double &zoneHigh, bool &isBuySetup)
    double base = MathMin(p1,p2), range = MathAbs(p1-p2);
    zoneLow  = base + range * Fib_Level_Low;
    zoneHigh = base + range * Fib_Level_High;
-   isBuySetup = (p1 < p2);               // fib going up → BUY
+   isBuySetup = (p1 < p2);
    if(!isBuySetup) { double t=zoneLow; zoneLow=zoneHigh; zoneHigh=t; }
    double close = iClose(_Symbol, PERIOD_H1, 0);
    return (close >= zoneLow && close <= zoneHigh);
@@ -302,9 +313,9 @@ bool IsTradingTime()
    datetime t = TimeCurrent() + TimezoneOffset * 3600;
    MqlDateTime dt; TimeToStruct(t, dt);
    int d = dt.day_of_week, h = dt.hour;
-   if(d == 0 && h >= 19) return true;                     // Sun after 19:00
-   if(d >= 1 && d <= 4 && (h < 12 || h >= 18)) return true;// Mon-Thu outside 12-18
-   if(d == 5 && h < 4) return true;                       // Fri before 04:00
+   if(d == 0 && h >= 19) return true;
+   if(d >= 1 && d <= 4 && (h < 12 || h >= 18)) return true;
+   if(d == 5 && h < 4) return true;
    return false;
 }
 
@@ -313,9 +324,8 @@ bool IsTradingTime()
 //+------------------------------------------------------------------+
 void CheckAndEnter()
 {
-   //--- limits
-   if(HasOpenPositionOnSymbol(_Symbol)) return;                 // 1 per symbol
-   if(CountTotalOpenPositions() >= 2) return;                   // 2 total
+   if(HasOpenPositionOnSymbol(_Symbol)) return;
+   if(CountTotalOpenPositions() >= 2) return;
 
    if(ObjectFind(0, fibObjectName) < 0) return;
    
@@ -335,10 +345,9 @@ void CheckAndEnter()
    bool priceAbove = close > sma5;
    bool priceBelow = close < sma5;
    
-   //--- direction from fib object (isBuySetup = BUY)
    double sl, tp;
 
-   //=== SELL : HIGH first (down-swing) → price retraces up into zone
+   // SELL: HIGH first → retrace up into zone
    if(!isBuySetup && smaBearish && priceBelow)
    {
       if(CalculateSLTP(sl, tp, false, isBuySetup) &&
@@ -352,7 +361,7 @@ void CheckAndEnter()
       return;
    }
 
-   //=== BUY : LOW first (up-swing) → price retraces down into zone
+   // BUY: LOW first → retrace down into zone
    if(isBuySetup && smaBullish && priceAbove)
    {
       if(CalculateSLTP(sl, tp, true, isBuySetup) &&
@@ -374,7 +383,6 @@ void OnTick()
 {
    if(!IsTradingTime()) return;
 
-   // trail only for this symbol
    if(HasOpenPositionOnSymbol(_Symbol)) TrailStop(_Symbol);
 
    datetime curBar = iTime(_Symbol, PERIOD_H1, 0);
@@ -386,7 +394,6 @@ void OnTick()
 
    UpdateFibObject();
 
-   // expire old fib
    if(ObjectFind(0, fibObjectName) >= 0)
    {
       datetime endTime = (datetime)ObjectGetInteger(0, fibObjectName, OBJPROP_TIME, 1);
@@ -396,7 +403,6 @@ void OnTick()
 
    CheckAndEnter();
 
-   // close everything on Friday 16:00 EST
    datetime cur = TimeCurrent() + TimezoneOffset * 3600;
    MqlDateTime dt; TimeToStruct(cur, dt);
    if(dt.day_of_week == 5 && dt.hour == 16)
